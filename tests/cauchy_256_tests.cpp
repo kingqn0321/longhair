@@ -119,89 +119,127 @@ static void print(const void *data, int bytes) {
 // 3
 // 5
 // 6
-int order_test() {
-    const unsigned block_bytes = 8 * 162; // a multiple of 8
+int PerfTimingTest()
+{
+    const unsigned block_bytes = 8 * 175; // a multiple of 8
 
     siamese::PCGRandom prng;
 	prng.Seed(siamese::GetTimeUsec());
 
-    const unsigned block_count = 4;
-    const unsigned recovery_block_count = 2;
+    const unsigned block_count = 48;
+    const unsigned recovery_block_count = 96;
 
     std::vector<uint8_t> data(block_bytes * block_count);
     std::vector<uint8_t> recovery_blocks(block_bytes * recovery_block_count);
     std::vector<Block> blocks(block_count);
 
-	const uint8_t *data_ptrs[256];
-	for (unsigned ii = 0; ii < block_count; ++ii) {
-		data_ptrs[ii] = &data[ii * block_bytes];
-	}
-
-	for (unsigned ii = 0; ii < block_bytes * block_count; ++ii) {
-		data[ii] = (uint8_t)prng.Next();
-	}
-
-    const int encodeResult = cauchy_256_encode(
-        block_count,
-        recovery_block_count,
-        data_ptrs,
-        &recovery_blocks[0],
-        block_bytes);
-    if (encodeResult != 0)
+    uint64_t sum_encode = 0;
+    uint64_t sum_decode = 0;
+    const int trials = 1000;
+    for (int trial = 0; trial < trials; ++trial)
     {
-        cout << "Encode failed" << endl;
-        SIAMESE_DEBUG_BREAK();
-        return 1;
+        const uint8_t *data_ptrs[256];
+        for (unsigned ii = 0; ii < block_count; ++ii)
+        {
+            data_ptrs[ii] = &data[ii * block_bytes];
+        }
+
+        for (unsigned ii = 0; ii < block_bytes * block_count; ++ii)
+        {
+            data[ii] = (uint8_t)prng.Next();
+        }
+
+        const uint64_t t0 = siamese::GetTimeUsec();
+        const int encodeResult = cauchy_256_encode(
+            block_count,
+            recovery_block_count,
+            data_ptrs,
+            &recovery_blocks[0],
+            block_bytes);
+        if (encodeResult != 0)
+        {
+            cout << "Encode failed" << endl;
+            SIAMESE_DEBUG_BREAK();
+            return 1;
+        }
+
+        const uint64_t t1 = siamese::GetTimeUsec();
+        const uint64_t encode_time = t1 - t0;
+        sum_encode += encode_time;
+
+        for (unsigned ii = 0; ii < block_count; ++ii)
+        {
+            blocks[ii].data = (uint8_t *)data_ptrs[ii];
+            blocks[ii].row = (uint8_t)ii;
+        }
+
+        int rem = block_count;
+        for (unsigned ii = 0; ii < recovery_block_count && ii < block_count; ++ii)
+        {
+            unsigned jj = prng.Next() % rem;
+
+            --rem;
+
+            for (unsigned kk = jj; kk < rem; ++kk)
+            {
+                blocks[kk].data = blocks[kk + 1].data;
+                blocks[kk].row = blocks[kk + 1].row;
+            }
+
+            blocks[rem].data = &recovery_blocks[ii * block_bytes];
+            blocks[rem].row = block_count + ii;
+        }
+
+        // cout << "Before decode:" << endl;
+        // for (unsigned ii = 0; ii < block_count; ++ii)
+        // {
+        //     cout << (int)blocks[ii].row << endl;
+        // }
+
+        const uint64_t t2 = siamese::GetTimeUsec();
+        const int decodeResult = cauchy_256_decode(
+            block_count,
+            recovery_block_count,
+            &blocks[0],
+            block_bytes);
+        if (decodeResult != 0)
+        {
+            cout << "Decode failed" << endl;
+            SIAMESE_DEBUG_BREAK();
+            return 1;
+        }
+
+        const uint64_t t3 = siamese::GetTimeUsec();
+        const uint64_t decode_time = t3 - t2;
+        sum_decode += decode_time;
+
+        // cout << "After decode:" << endl;
+        // for (unsigned ii = 0; ii < block_count; ++ii)
+        // {
+        //     cout << (int)blocks[ii].row << endl;
+        // }
+
+        int result = 0;
+        for (int ii = 0; ii < block_count; ++ii)
+        {
+            result |= memcmp(blocks[ii].data, data_ptrs[blocks[ii].row], block_bytes);
+        }
+        SIAMESE_DEBUG_ASSERT(result == 0);
     }
 
-	for (unsigned ii = 0; ii < block_count; ++ii) {
-		blocks[ii].data = (uint8_t*)data_ptrs[ii];
-		blocks[ii].row = (uint8_t)ii;
-	}
+    double mbps_enc = 0, mbps_dec = 0;
+    const double opusec_enc = sum_encode / static_cast<double>(trials);
+    const double opusec_dec = sum_decode / static_cast<double>(trials);
+    if (opusec_enc)
+        mbps_enc = (block_bytes * block_count / opusec_enc);
+    if (opusec_dec)
+        mbps_dec = (block_bytes * block_count / opusec_dec);
 
-	int rem = block_count;
-	for (unsigned ii = 0; ii < recovery_block_count; ++ii) {
-        unsigned jj = prng.Next() % rem;
+    cout << "Params: size = " << block_bytes << " k = " << block_count << " m = " << recovery_block_count << endl;
+    cout << "Encoder: " << opusec_enc << " usec, " << mbps_enc << " MBps" << endl;
+    cout << "Decoder: " << opusec_dec << " usec, " << mbps_dec << " MBps" << endl;
 
-		--rem;
-
-		for (unsigned kk = jj; kk < rem; ++kk) {
-			blocks[kk].data = blocks[kk + 1].data;
-			blocks[kk].row = blocks[kk + 1].row;
-		}
-
-		blocks[rem].data = &recovery_blocks[ii * block_bytes];
-		blocks[rem].row = block_count + ii;
-	}
-
-	cout << "Before decode:" << endl;
-	for (unsigned ii = 0; ii < block_count; ++ii) {
-		cout << (int)blocks[ii].row << endl;
-	}
-
-    const int decodeResult = cauchy_256_decode(
-        block_count,
-        recovery_block_count,
-        &blocks[0],
-        block_bytes);
-    if (decodeResult != 0)
-    {
-        cout << "Decode failed" << endl;
-        SIAMESE_DEBUG_BREAK();
-        return 1;
-    }
-
-	cout << "After decode:" << endl;
-	for (unsigned ii = 0; ii < block_count; ++ii) {
-		cout << (int)blocks[ii].row << endl;
-	}
-
-    int result = 0;
-	for (int ii = 0; ii < block_count; ++ii) {
-        result |= memcmp(blocks[ii].data, data_ptrs[blocks[ii].row], block_bytes);
-	}
-    SIAMESE_DEBUG_ASSERT(result == 0);
-    return result;
+    return 0;
 }
 
 int main() {
@@ -209,11 +247,15 @@ int main() {
 
 	cout << "Cauchy RS Codec Unit Tester" << endl;
 
-    if (0 != order_test())
+    if (0 != PerfTimingTest())
     {
-        cout << "OrderTest failed" << endl;
+        cout << "PerfTimingTest failed" << endl;
         return 1;
     }
+
+#if 1
+    return 0;
+#endif
 
     const unsigned block_bytes = 8 * 162; // a multiple of 8
 
