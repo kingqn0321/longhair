@@ -14,9 +14,18 @@ set(LIB_SOURCE_FILES
         SiameseTools.h
         )
 
+if(MSVC)
+set(UNIT_TEST_SOURCE_FILES
+        tests/cauchy_256_tests.cpp
+        tests/getopt.c
+        tests/getopt_long.c
+        tests/getopt.h
+        )
+else()
 set(UNIT_TEST_SOURCE_FILES
         tests/cauchy_256_tests.cpp
         )
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)

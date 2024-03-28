@@ -7,6 +7,16 @@ using namespace std;
 #include "../SiameseTools.h"
 #include <cstdint>
 
+#ifdef _WIN32
+#include "getopt.h"
+#else
+#include <unistd.h>
+#endif
+
+static int original_count_k_ = 48;
+static int recovery_count_m_ = 96;
+static int block_bytes_l_ = 1400;
+static int trials_n_ = 1000;
 
 //------------------------------------------------------------------------------
 // Utility: Deck Shuffling function
@@ -121,13 +131,13 @@ static void print(const void *data, int bytes) {
 // 6
 int PerfTimingTest()
 {
-    const unsigned block_bytes = 8 * 175; // a multiple of 8
+    const unsigned block_bytes = block_bytes_l_; // a multiple of 8
 
     siamese::PCGRandom prng;
 	prng.Seed(siamese::GetTimeUsec());
 
-    const unsigned block_count = 48;
-    const unsigned recovery_block_count = 96;
+    const unsigned block_count = original_count_k_;
+    const unsigned recovery_block_count = recovery_count_m_;
 
     std::vector<uint8_t> data(block_bytes * block_count);
     std::vector<uint8_t> recovery_blocks(block_bytes * recovery_block_count);
@@ -135,9 +145,21 @@ int PerfTimingTest()
 
     uint64_t sum_encode = 0;
     uint64_t sum_decode = 0;
-    const int trials = 1000;
+    const int trials = trials_n_;
+    cout << "Params: block-size = " << block_bytes << " k = " << block_count
+         << " m = " << recovery_block_count << " trials = " << trials << endl;
+    cout << "PerfTimingTest Start!\n"
+         << endl;
+    int last_print = -1;
     for (int trial = 0; trial < trials; ++trial)
     {
+        int percent = trial * 100 / trials;
+        if (0 == percent % 10 && percent != last_print)
+        {
+            last_print = percent;
+            cout << "......%" << percent
+                 << endl;
+        }
         const uint8_t *data_ptrs[256];
         for (unsigned ii = 0; ii < block_count; ++ii)
         {
@@ -227,25 +249,69 @@ int PerfTimingTest()
         SIAMESE_DEBUG_ASSERT(result == 0);
     }
 
-    double mbps_enc = 0, mbps_dec = 0;
     const double opusec_enc = sum_encode / static_cast<double>(trials);
+    const double mbps_enc = (block_bytes * block_count / opusec_enc);
     const double opusec_dec = sum_decode / static_cast<double>(trials);
-    if (opusec_enc)
-        mbps_enc = (block_bytes * block_count / opusec_enc);
-    if (opusec_dec)
-        mbps_dec = (block_bytes * block_count / opusec_dec);
+    const double mbps_dec = (block_bytes * block_count / opusec_dec);
 
-    cout << "Params: size = " << block_bytes << " k = " << block_count << " m = " << recovery_block_count << endl;
+    cout << "\nPerfTimingTest End!\n"
+         << endl;
     cout << "Encoder: " << opusec_enc << " usec, " << mbps_enc << " MBps" << endl;
     cout << "Decoder: " << opusec_dec << " usec, " << mbps_dec << " MBps" << endl;
 
     return 0;
 }
 
-int main() {
-	cauchy_256_init();
+static inline void show_help()
+{
+    fprintf(stdout, "Usage: ./longhair_test [options] trials_cnt \n");
+    fprintf(stdout, "Eg: ./longhair_test -k 48 -m 96 -l 1400 1000 \n");
+    fprintf(stdout, "Print help:\n"
+                    "-h         show help\n"
+                    "\n");
+    fprintf(stdout, "Input specification:\n"
+                    "-k cnt     set original count\n"
+                    "-m cnt     set recovery count\n"
+                    "-l bytes   set block bytes\n"
+                    "\n");
+}
 
-	cout << "Cauchy RS Codec Unit Tester" << endl;
+int main(int argc, char **argv)
+{
+    int opt;
+    while ((opt = getopt(argc, argv, "hk:m:l:")) != EOF)
+    {
+        switch (opt)
+        {
+        case 'h':
+            show_help();
+            exit(EXIT_FAILURE);
+        case 'k':
+            original_count_k_ = atoi(optarg);
+            break;
+        case 'm':
+            recovery_count_m_ = atoi(optarg);
+            break;
+        case 'l':
+            block_bytes_l_ = atoi(optarg);
+            break;
+        default: /* '?' */
+            fprintf(stdout, "Use \'-h\' to get more help\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (optind >= argc)
+    {
+        fprintf(stdout, "Trials count must be specified %d-%d\n", optind, argc);
+        exit(EXIT_FAILURE);
+    }
+
+    trials_n_ = atoi(argv[optind]);
+
+    cauchy_256_init();
+
+    cout << "Cauchy RS Codec Unit Tester" << endl;
 
     if (0 != PerfTimingTest())
     {
@@ -436,4 +502,3 @@ int main() {
 
 	return 0;
 }
-
